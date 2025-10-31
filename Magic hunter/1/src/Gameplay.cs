@@ -110,7 +110,9 @@ public class GamePlay
                 _position += direction * _speed * delta;
                 _width += 0.2f;
                 _height += 0.2f;
-                _depth -= 0.001f;
+                while (_depth > 0.1f){
+                    _depth -= 0.001f;
+                }
             }
             UpdateRect();
             _moveTimer += gameTime.ElapsedGameTime.TotalSeconds;
