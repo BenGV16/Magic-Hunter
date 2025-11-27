@@ -7,6 +7,7 @@ namespace Magic_Hunter.src;
 public abstract class Enemies
 {
     public Rectangle Rect;
+    public Vector2 Position => _position; 
     protected Vector2 _position;
     protected float _width = 200f;
     protected float _height = 200f;
@@ -55,6 +56,12 @@ public abstract class Enemies
             _hitTimer -= gameTime.ElapsedGameTime.TotalSeconds;
         }
     }
+    
+    public void Teleport(Vector2 newPos)
+    {
+        _position = newPos;
+        UpdateRect();
+    }
 
     protected void UpdateRect()
     {
@@ -81,27 +88,19 @@ public abstract class Enemies
     }
 }
 
-// --- MODIFICADO: HADA 1 (Crece y brilla) ---
 public class Hada : Enemies
 {
     private Vector2 _target;
-    // Eliminamos _idleAnim y _isMoving, ya no se detendrá.
-
-    // Variables para el efecto de brillo
     private float _baseWidth;
-    private float _attackWidth = 400f; // Tamaño al que ataca
-
+    private float _attackWidth = 400f;
     public bool IsReadyToAttack => _width >= _attackWidth; 
 
     public Hada(Vector2 startPos, Random random, float depth, Color color, Texture2D texture, int frameCount, int frameWidth, int frameHeight, float frameTime, float speedMultiplier)
         : base(startPos, random, depth, color, texture, 1, 5, speedMultiplier)
     {
-        // Velocidad aumentada considerablemente (2.5 veces la base)
         _speed *= 2.5f;
-        _baseWidth = _width; // Guardamos el tamaño inicial (200f)
-
+        _baseWidth = _width;
         _target = new Vector2(startPos.X, startPos.Y + 100); 
-        // Solo usa la animación de movimiento
         _animator = new AnimationManager(texture, frameCount, frameWidth, frameHeight, frameTime);
         _animator.Play(true);
     }
@@ -109,49 +108,33 @@ public class Hada : Enemies
     public override void Update(GameTime gameTime, Viewport viewport)
     {
         base.Update(gameTime, viewport);
-
-        // Crecimiento constante
         float growthRate = 35f * (float)gameTime.ElapsedGameTime.TotalSeconds;
         _width += growthRate;
         _height += growthRate;
-
-        // Movimiento continuo: Si está cerca del objetivo, elige otro inmediatamente.
         Vector2 dir = _target - _position;
         if (dir.Length() < 10f)
         {
-            // Elegir nuevo objetivo aleatorio en pantalla
             _target = new Vector2(
                 _random.Next(50, viewport.Width - 50),
                 _random.Next(50, (int)(viewport.Height * 0.7))
             );
-            dir = _target - _position; // Recalcular dirección
+            dir = _target - _position;
         }
-
         if (dir.Length() > 0)
         {
             dir.Normalize();
             _position += dir * _speed * (float)gameTime.ElapsedGameTime.TotalSeconds;
         }
-        
         _animator.Update(gameTime);
         UpdateRect();
     }
 
-    // SOBRESCRIBIMOS DRAW PARA EL EFECTO DE BRILLO
     public override void Draw(SpriteBatch spriteBatch, Texture2D pixel)
     {
-        // 1. Calcular el porcentaje de "carga/tamaño" (de 0.0 a 1.0)
         float ratio = (_width - _baseWidth) / (_attackWidth - _baseWidth);
         ratio = MathHelper.Clamp(ratio, 0f, 1f);
-
-        // 2. Calcular el color de brillo.
-        // Interpolamos entre Blanco normal y un Amarillo muy brillante intenso.
-        // Cuanto más grande, más amarillo/blanco intenso se verá el sprite.
         Color brightnessColor = Color.Lerp(Color.White, new Color(255, 255, 180), ratio);
-
-        // 3. Si está golpeada (hitTimer > 0), el rojo tiene prioridad. Si no, usa el brillo.
         Color finalColor = (_hitTimer > 0) ? Color.Red : brightnessColor;
-
         _animator.Draw(spriteBatch, _position, finalColor, Depth, _width, _height, _spriteEffect);
     }
 }
@@ -159,114 +142,259 @@ public class Hada : Enemies
 public class Lobo : Enemies
 {
     private float _targetX;
+    private AnimationManager _walkAnim;
+    private AnimationManager _attackAnim;
+    public bool IsAttacking { get; private set; } = false;
+    
+    private float _descentSpeed = 40f; 
+    private float _lateralSpeed = 30f; 
+    private float _growthSpeed = 25f;  
 
-    public Lobo(Vector2 startPos, Random random, float depth, Color color, Texture2D texture, float speedMultiplier)
-        : base(startPos, random, depth, color, texture, 5, 10, speedMultiplier)
+    public Lobo(Vector2 startPos, Random random, float depth, Color color, Texture2D walkTexture, Texture2D attackTexture, int frameWidth, int frameHeight, float speedMultiplier)
+        : base(startPos, random, depth, color, walkTexture, 5, 10, speedMultiplier)
     {
-        _targetX = _random.Next(0, 800); 
-    }
-
-    public override void Update(GameTime gameTime, Viewport viewport)
-    {
-        base.Update(gameTime, viewport);
-
-        _timer += gameTime.ElapsedGameTime.TotalSeconds;
-        if (_timer > 3.0)
-        {
-            _targetX = _random.Next(0, viewport.Width);
-            _timer = 0;
-        }
-
-        float dir = _targetX - _position.X;
-        if (Math.Abs(dir) > 1f)
-        {
-            _position.X += Math.Sign(dir) * _speed * (float)gameTime.ElapsedGameTime.TotalSeconds;
-            _width += 0.1f;
-            _height += 0.1f;
-            _position.Y += 0.1f;
-        }
-        UpdateRect();
-    }
-}
-
-public class Sapo : Enemies
-{
-    public Sapo(Vector2 startPos, Random random, float depth, Color color, Texture2D texture, int frameCount, int frameWidth, int frameHeight, float frameTime, float speedMultiplier)
-        : base(startPos, random, depth, color, texture, 8, 15, speedMultiplier)
-    {
-        _animator = new AnimationManager(texture, frameCount, frameWidth, frameHeight, frameTime);
+        _targetX = 0; 
+        
+        _walkAnim = new AnimationManager(walkTexture, 2, frameWidth, frameHeight, 0.2f);
+        _attackAnim = new AnimationManager(attackTexture, 1, attackTexture.Width, attackTexture.Height, 0.2f);
+        
+        _animator = _walkAnim;
         _animator.Play(true);
     }
 
     public override void Update(GameTime gameTime, Viewport viewport)
     {
         base.Update(gameTime, viewport);
+        float delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
 
-        _timer += gameTime.ElapsedGameTime.TotalSeconds;
-        if (_timer > 1.5)
+        if (_targetX == 0) _targetX = viewport.Width / 2f;
+
+        if (!IsAttacking)
         {
-            _width = 220f; 
-            _height = 220f;
-            if (_timer > 3.0) _timer = 0;
+            _position.Y += _descentSpeed * delta;
+            _width += _growthSpeed * delta;
+            _height += _growthSpeed * delta;
+
+            float dirX = (_targetX - _position.X);
+            
+            if (Math.Abs(dirX) > 5f)
+            {
+                _position.X += Math.Sign(dirX) * _lateralSpeed * delta;
+                if (Math.Sign(dirX) < 0) _spriteEffect = SpriteEffects.FlipHorizontally;
+                else _spriteEffect = SpriteEffects.None;
+            }
+
+            if (_position.Y > viewport.Height * 0.75f) 
+            {
+                IsAttacking = true;
+                _animator = _attackAnim;
+                _animator.Play(true);
+            }
+            
+            if (!IsAttacking) _animator = _walkAnim; 
         }
         else
         {
-             _width = 200f;
-             _height = 200f;
+            _animator = _attackAnim;
         }
+
         _animator.Update(gameTime);
         UpdateRect();
     }
 }
 
-public class Gusano : Enemies
+// --- SAPO MODIFICADO ---
+public class Sapo : Enemies
 {
-    private enum State { Emerging, Idle }
-    private State _state;
-    private AnimationManager _emergeAnim;
-    private AnimationManager _idleAnim;
+    public bool ReadyToShoot = false;
+    private double _shootTimer = 0;
+    private bool _hasFiredThisCycle = false; 
+    private int _frameWidth; 
 
-    public Gusano(Vector2 startPos, Random random, float depth, Color color,
-              Texture2D emergeTexture, Texture2D idleTexture,
-              int emergeFrames, int idleFrames,
-              int emergeFrameWidth, int emergeFrameHeight,
-              int idleFrameWidth, int idleFrameHeight,
-              float frameTime, float speedMultiplier)
-    : base(startPos, random, depth, color, emergeTexture, 3, 8, speedMultiplier)
+    public Sapo(Vector2 startPos, Random random, float depth, Color color, Texture2D texture, int frameCount, int frameWidth, int frameHeight, float frameTime, float speedMultiplier)
+        : base(startPos, random, depth, color, texture, 8, 15, speedMultiplier)
     {
-        _emergeAnim = new AnimationManager(emergeTexture, emergeFrames, emergeFrameWidth, emergeFrameHeight, frameTime);
-        _idleAnim = new AnimationManager(idleTexture, idleFrames, idleFrameWidth, idleFrameHeight, frameTime);
-        _state = State.Emerging;
-        _animator = _emergeAnim;
-        _animator.Play(isLooping: false);
+        _frameWidth = frameWidth;
+        _animator = new AnimationManager(texture, frameCount, frameWidth, frameHeight, frameTime);
+        _animator.Play(false);
     }
 
     public override void Update(GameTime gameTime, Viewport viewport)
     {
         base.Update(gameTime, viewport);
 
-        _animator.Update(gameTime);
-        if (_state == State.Emerging && _animator.IsDone)
+        // CAMBIO: Temporizador a 5 segundos
+        _shootTimer += gameTime.ElapsedGameTime.TotalSeconds;
+        if (_shootTimer >= 5.0)
         {
-            _state = State.Idle;
-            _animator = _idleAnim;
-            _animator.Play(isLooping: true);
+            _shootTimer = 0;
+            _hasFiredThisCycle = false; 
+            _animator.Play(false);      
         }
 
-        if (_position.X < viewport.Width / 2)
+        if (!_animator.IsDone && _animator.CurrentFrame == 4 && !_hasFiredThisCycle)
         {
-            _spriteEffect = SpriteEffects.FlipHorizontally;
+            ReadyToShoot = true;       
+            _hasFiredThisCycle = true; 
+        }
+
+        _animator.Update(gameTime);
+        UpdateRect();
+    }
+
+    public override void Draw(SpriteBatch spriteBatch, Texture2D pixel)
+    {
+        Color drawColor = (_hitTimer > 0) ? Color.Red : Color;
+
+        if (_animator.IsDone)
+        {
+            Rectangle destRect = new Rectangle((int)(_position.X - _width / 2f), (int)(_position.Y - _height / 2f), (int)_width, (int)_height);
+            Rectangle sourceRect = new Rectangle(0, 0, _frameWidth, _texture.Height);
+            spriteBatch.Draw(_texture, destRect, sourceRect, drawColor, 0f, Vector2.Zero, _spriteEffect, Depth);
         }
         else
         {
-            _spriteEffect = SpriteEffects.None;
+            _animator.Draw(spriteBatch, _position, drawColor, Depth, _width, _height, _spriteEffect);
+        }
+    }
+}
+
+public class Gusano : Enemies
+{
+    public enum State { Emerging, Idle, Attacking, Burrowing, Hidden }
+    public State CurrentState => _state; 
+    
+    private State _state;
+    private AnimationManager _emergeAnim;
+    private AnimationManager _idleAnim;
+    private AnimationManager _attackAnim;
+
+    public bool ReadyToShoot = false;
+    private double _hiddenTimer = 0;
+    private double _waitToHideTimer = 0; 
+    
+    // Para controlar un solo disparo por posición
+    private bool _hasShotAtCurrentPos = false; 
+
+    public Gusano(Vector2 startPos, Random random, float depth, Color color,
+              Texture2D emergeTexture, Texture2D idleTexture, Texture2D attackTexture,
+              int emergeFrames, int idleFrames, int attackFrames,
+              int emergeFrameWidth, int emergeFrameHeight,
+              int idleFrameWidth, int idleFrameHeight,
+              int attackFrameWidth, int attackFrameHeight,
+              float frameTime, float speedMultiplier)
+    : base(startPos, random, depth, color, emergeTexture, 3, 8, speedMultiplier)
+    {
+        _emergeAnim = new AnimationManager(emergeTexture, emergeFrames, emergeFrameWidth, emergeFrameHeight, frameTime);
+        _idleAnim = new AnimationManager(idleTexture, idleFrames, idleFrameWidth, idleFrameHeight, frameTime);
+        
+        if (attackTexture != null)
+            _attackAnim = new AnimationManager(attackTexture, attackFrames, attackFrameWidth, attackFrameHeight, frameTime);
+        else 
+            _attackAnim = _idleAnim;
+
+        _state = State.Emerging;
+        _animator = _emergeAnim;
+        _animator.Play(isLooping: false);
+    }
+
+    public void TriggerAttack()
+    {
+        if (_state == State.Idle && !_hasShotAtCurrentPos)
+        {
+            _state = State.Attacking;
+            _animator = _attackAnim;
+            _animator.Play(isLooping: false);
+            _hasShotAtCurrentPos = true; 
+        }
+    }
+
+    public override void Update(GameTime gameTime, Viewport viewport)
+    {
+        base.Update(gameTime, viewport);
+        _animator.Update(gameTime);
+
+        switch (_state)
+        {
+            case State.Emerging:
+                if (_animator.IsDone)
+                {
+                    _state = State.Idle;
+                    _animator = _idleAnim;
+                    _animator.Play(isLooping: true);
+                    _waitToHideTimer = 0; 
+                }
+                break;
+
+            case State.Attacking:
+                if (_animator.IsDone)
+                {
+                    _state = State.Idle;
+                    _animator = _idleAnim;
+                    _animator.Play(isLooping: true);
+                }
+                break;
+
+            case State.Idle:
+                // Lógica de disparo (ahora controlada por Gameplay, pero aquí verificamos tiempos para esconderse)
+                // Si ya disparó, se esconde rápido.
+                _waitToHideTimer += gameTime.ElapsedGameTime.TotalSeconds;
+                
+                if (_hasShotAtCurrentPos || _waitToHideTimer > 4.0) 
+                {
+                    _state = State.Burrowing;
+                    _animator = _emergeAnim; 
+                    _animator.Play(isLooping: false, reversed: true); 
+                }
+                break;
+
+            case State.Burrowing:
+                if (_animator.IsDone)
+                {
+                    _state = State.Hidden;
+                    _hiddenTimer = _random.NextDouble() * 2.0 + 3.0; 
+                    _position = new Vector2(-1000, -1000); 
+                }
+                break;
+
+            case State.Hidden:
+                _hiddenTimer -= gameTime.ElapsedGameTime.TotalSeconds;
+                if (_hiddenTimer <= 0)
+                {
+                    int minX = (int)(viewport.Width * 0.1f);
+                    int maxX = (int)(viewport.Width * 0.7f); 
+                    float newX = _random.Next(minX, maxX);
+                    
+                    int minY = (int)(viewport.Height * 0.5f);
+                    int maxY = (int)(viewport.Height * 0.8f);
+                    float newY = _random.Next(minY, maxY);
+
+                    Teleport(new Vector2(newX, newY));
+
+                    _state = State.Emerging;
+                    _animator = _emergeAnim;
+                    _animator.Play(isLooping: false, reversed: false);
+                    _hasShotAtCurrentPos = false; 
+                }
+                break;
+        }
+
+        if (_state != State.Hidden)
+        {
+            if (_position.X < viewport.Width / 2) _spriteEffect = SpriteEffects.FlipHorizontally;
+            else _spriteEffect = SpriteEffects.None;
         }
 
         UpdateRect();
     }
+    
+    public override void Draw(SpriteBatch spriteBatch, Texture2D pixel)
+    {
+        if (_state == State.Hidden) return;
+        base.Draw(spriteBatch, pixel);
+    }
 }
 
-// --- MODIFICADO: HADA 2 (Trampa rapida) ---
 public class Hada2 : Enemies
 {
     private Vector2 _target;
@@ -275,9 +403,7 @@ public class Hada2 : Enemies
     public Hada2(Vector2 startPos, Random random, float depth, Color color, Texture2D texture, int frameCount, int frameWidth, int frameHeight, float frameTime, float speedMultiplier)
         : base(startPos, random, depth, color, texture, 1, 0, speedMultiplier) 
     {
-        // Velocidad MUY aumentada (3 veces la base) para que sea difícil de acertar
         _speed *= 3.0f; 
-
         _target = new Vector2(startPos.X, startPos.Y + 150); 
         _animator = new AnimationManager(texture, frameCount, frameWidth, frameHeight, frameTime);
         _animator.Play(true);
@@ -287,16 +413,13 @@ public class Hada2 : Enemies
     {
         base.Update(gameTime, viewport);
         _animator.Update(gameTime);
-
         _timer += gameTime.ElapsedGameTime.TotalSeconds;
 
-        // Se va a los 8 segundos
         if (!_leaving && _timer > 8.0)
         {
             _leaving = true;
             _target = new Vector2(_position.X, -200); 
         }
-        // Movimiento continuo: Si llega al destino y NO se está yendo, elige otro inmediatamente.
         else if (!_leaving && Vector2.Distance(_position, _target) < 10f)
         {
              _target = new Vector2(
@@ -311,8 +434,6 @@ public class Hada2 : Enemies
             dir.Normalize();
             _position += dir * _speed * (float)gameTime.ElapsedGameTime.TotalSeconds;
         }
-        
-        // No crece
         UpdateRect();
     }
 }

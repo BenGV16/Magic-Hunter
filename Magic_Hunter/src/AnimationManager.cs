@@ -10,10 +10,12 @@ namespace Magic_Hunter.src
         private List<Rectangle> _frames = new();
         private float _frameTime;
         private bool _isLooping;
+        private bool _isReversed; // NUEVO: Para reproducir hacia atrás
 
         private int _currentFrame;
         private double _timer;
 
+        public int CurrentFrame => _currentFrame;
         public bool IsDone { get; private set; }
 
         public AnimationManager(Texture2D texture, int frameCount, int frameWidth, int frameHeight, float frameTime)
@@ -29,13 +31,19 @@ namespace Magic_Hunter.src
             }
         }
 
-        public void Play(bool isLooping)
+        // MODIFICADO: Ahora acepta parámetro reversed
+        public void Play(bool isLooping, bool reversed = false)
         {
             _isLooping = isLooping;
-            _currentFrame = 0;
+            _isReversed = reversed;
+            
+            // Si es reverso, empezamos en el último frame, sino en el 0
+            _currentFrame = _isReversed ? _frames.Count - 1 : 0;
+            
             _timer = 0;
             IsDone = false;
         }
+
         public void Update(GameTime gameTime)
         {
             if (IsDone) return;
@@ -43,18 +51,24 @@ namespace Magic_Hunter.src
             if (_timer >= _frameTime)
             {
                 _timer -= _frameTime;
-                _currentFrame++;
 
-                if (_currentFrame >= _frames.Count)
+                // Lógica normal o reversa
+                if (_isReversed)
                 {
-                    if (_isLooping)
+                    _currentFrame--;
+                    if (_currentFrame < 0)
                     {
-                        _currentFrame = 0;
+                        if (_isLooping) _currentFrame = _frames.Count - 1;
+                        else { _currentFrame = 0; IsDone = true; }
                     }
-                    else
+                }
+                else
+                {
+                    _currentFrame++;
+                    if (_currentFrame >= _frames.Count)
                     {
-                        _currentFrame = _frames.Count - 1;
-                        IsDone = true;
+                        if (_isLooping) _currentFrame = 0;
+                        else { _currentFrame = _frames.Count - 1; IsDone = true; }
                     }
                 }
             }
@@ -80,6 +94,5 @@ namespace Magic_Hunter.src
                 depth
             );
         }
-        // Se eliminó SetFrameTime aquí
     }
 }
